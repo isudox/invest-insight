@@ -14,13 +14,14 @@ import {
 } from '@invest-insight/shared';
 import { getDb, tx } from '../../db/index.js';
 import { accounts, assetComponents, assets, categories, goals, transactions, type TxRow } from '../../db/schema.js';
+import { fxForNewTx } from '../../domain/fx.js';
 import { toDecimalString } from '../../domain/ledger.js';
 import { computeHoldings, listCategories } from '../../domain/portfolio.js';
 import { body, HttpError, idParam, type AppEnv } from '../context.js';
 
 const num = (v: string | null) => (v === null ? null : Number(v));
 /** 对外输出时金额转为 number；内部存储与计算仍为十进制字符串 */
-const txOut = (t: TxRow) => ({ ...t, quantity: num(t.quantity), price: num(t.price), amount: num(t.amount), fee: Number(t.fee) });
+const txOut = (t: TxRow) => ({ ...t, quantity: num(t.quantity), price: num(t.price), amount: num(t.amount), fee: Number(t.fee), fx_rate: num(t.fx_rate) });
 
 const nextSort = (table: typeof categories | typeof accounts) =>
   (getDb()
@@ -156,13 +157,21 @@ export const assetRoutes = new Hono<AppEnv>()
             quantity: toDecimalString(init.quantity),
             price: toDecimalString(init.price),
             fee: toDecimalString(init.fee) ?? '0',
+            ...fxForNewTx(b.currency, init.fx_rate),
             note: '初始持仓',
           })
           .run();
       } else if (init && b.valuation_mode === 'manual' && init.amount != null && Number(init.amount) > 0) {
         getDb()
           .insert(transactions)
-          .values({ asset_id: assetId, type: 'deposit', date: init.date, amount: toDecimalString(init.amount), note: '初始投入' })
+          .values({
+            asset_id: assetId,
+            type: 'deposit',
+            date: init.date,
+            amount: toDecimalString(init.amount),
+            ...fxForNewTx(b.currency, init.fx_rate),
+            note: '初始投入',
+          })
           .run();
       }
       return assetId;
@@ -230,7 +239,11 @@ export const assetRoutes = new Hono<AppEnv>()
 
 // ---------- 交易流水 ----------
 
-function txValues(t: TxInput) {
+function txValues(t: TxInput, existing?: TxRow) {
+  const asset = getDb().select({ currency: assets.currency }).from(assets).where(eq(assets.id, t.asset_id)).get();
+  if (!asset) throw new HttpError(404, 'error.asset_not_found');
+  // 编辑时未提供成交汇率：保留原记录的汇率，避免被当前汇率覆盖
+  const keep = t.fx_rate == null && existing && existing.asset_id === t.asset_id && existing.fx_rate != null;
   return {
     asset_id: t.asset_id,
     type: t.type,
@@ -239,6 +252,7 @@ function txValues(t: TxInput) {
     price: toDecimalString(t.price),
     amount: toDecimalString(t.amount),
     fee: toDecimalString(t.fee) ?? '0',
+    ...(keep ? { fx_rate: existing.fx_rate, fx_base: existing.fx_base } : fxForNewTx(asset.currency, t.fx_rate)),
     note: t.note ?? null,
   };
 }
@@ -292,7 +306,8 @@ export const transactionRoutes = new Hono<AppEnv>()
     const id = idParam(c);
     const b = await body(c, txInput);
     checkSell(b, id);
-    getDb().update(transactions).set(txValues(b)).where(eq(transactions.id, id)).run();
+    const existing = getDb().select().from(transactions).where(eq(transactions.id, id)).get();
+    getDb().update(transactions).set(txValues(b, existing)).where(eq(transactions.id, id)).run();
     return c.json({ ok: true });
   })
   .delete('/:id', (c) => {

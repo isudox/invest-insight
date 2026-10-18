@@ -76,6 +76,9 @@ export const transactions = sqliteTable(
     price: text('price'),
     amount: text('amount'),
     fee: text('fee').notNull().default('0'),
+    /** 成交时的汇率：1 单位资产币种 = fx_rate 单位 fx_base（记录时的基准币种）；为空表示未知，按当前汇率估算 */
+    fx_rate: text('fx_rate'),
+    fx_base: text('fx_base'),
     note: text('note'),
     created_at: createdAt(),
   },

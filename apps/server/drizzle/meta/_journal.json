@@ -8,6 +8,13 @@
       "when": 1792319213344,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1792322384367,
+      "tag": "0001_transaction_fx",
+      "breakpoints": true
     }
   ]
 }

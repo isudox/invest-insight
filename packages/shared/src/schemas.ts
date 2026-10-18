@@ -57,6 +57,7 @@ export const assetCreateInput = assetInput.extend({
       price: decimalInput.optional(),
       amount: decimalInput.optional(),
       fee: decimalInput.default(0),
+      fx_rate: decimalInput.optional(),
     })
     .optional(),
 });
@@ -70,6 +71,8 @@ export const txInput = z
     price: decimalInput.nullish(),
     amount: decimalInput.nullish(),
     fee: decimalInput.default(0),
+    /** 成交汇率：1 单位资产币种 = ? 基准币种；外币交易省略时按当前汇率记录 */
+    fx_rate: decimalInput.nullish(),
     note: z.string().max(500).nullish(),
   })
   .superRefine((t, ctx) => {
@@ -163,3 +166,14 @@ export type ComponentInput = z.infer<typeof componentInput>;
 export type GoalInput = z.infer<typeof goalInput>;
 export type SettingsInput = z.infer<typeof settingsInput>;
 export type PrefsInput = z.infer<typeof prefsInput>;
+
+export const csvImportInput = z.object({
+  csv: z.string().min(1).max(10_000_000),
+  /** 找不到的资产 / 账户是否自动创建 */
+  create_missing: z.boolean().default(true),
+  /** 新建资产的默认类别（CSV 未提供或无法匹配时） */
+  default_category_id: z.number().int().nullish(),
+  /** 新建资产的默认账户（CSV 未提供时） */
+  default_account_id: z.number().int().nullish(),
+});
+export type CsvImportInput = z.infer<typeof csvImportInput>;

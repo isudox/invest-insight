@@ -45,6 +45,12 @@ export interface Holding {
   cost_base: number;
   invested_base: number;
   unrealized_base: number;
+  /** 浮动盈亏中来自价格变动的部分（按当前汇率） */
+  price_pnl_base: number;
+  /** 浮动盈亏中来自汇率变动的部分 */
+  fx_pnl_base: number;
+  /** 缺少成交汇率、按当前汇率估算的交易笔数 */
+  fx_estimated_count: number;
   realized_base: number;
   income_base: number;
   total_return_base: number;
@@ -60,6 +66,8 @@ export interface Summary {
   total_cost: number;
   total_invested: number;
   unrealized: number;
+  price_pnl: number;
+  fx_pnl: number;
   realized: number;
   income: number;
   total_return: number;
@@ -93,6 +101,8 @@ export interface Transaction {
   price: number | null;
   amount: number | null;
   fee: number;
+  fx_rate: number | null;
+  fx_base: string | null;
   note: string | null;
   asset_name?: string;
   asset_symbol?: string | null;
@@ -299,4 +309,37 @@ export interface Planning {
     months_to_fire: number | null;
     fire_date: string | null;
   };
+}
+
+export interface CsvImportRow {
+  /** CSV 中的行号（含表头，从 1 开始） */
+  line: number;
+  date: string | null;
+  type: TxType | null;
+  asset: string;
+  symbol: string | null;
+  asset_id: number | null;
+  new_asset: boolean;
+  quantity: string | null;
+  price: string | null;
+  amount: string | null;
+  fee: string | null;
+  fx_rate: string | null;
+  note: string | null;
+  status: 'ok' | 'duplicate' | 'error';
+  message: string | null;
+}
+
+export interface CsvImportPreview {
+  rows: CsvImportRow[];
+  counts: { ok: number; duplicate: number; error: number };
+  new_assets: { name: string; symbol: string | null; currency: string; category: string; account: string | null; valuation_mode: ValuationMode }[];
+  new_accounts: string[];
+}
+
+export interface CsvImportResult {
+  imported: number;
+  skipped: number;
+  created_assets: number;
+  created_accounts: number;
 }

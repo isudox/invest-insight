@@ -37,6 +37,13 @@ export function importLegacyDatabase(sqlite: Database.Database, legacyFile: stri
         sqlite.exec(`DELETE FROM main."${table}"`);
         sqlite.exec(`INSERT INTO main."${table}" (${colList}) SELECT ${select.join(', ')} FROM legacy."${table}"`);
       }
+      // 旧版没有成交汇率：本币交易记为 1，外币交易留空（按当前汇率估算并在体检中提示）
+      sqlite.exec(
+        `UPDATE main.transactions SET fx_base = COALESCE((SELECT value FROM main.settings WHERE key = 'base_currency'), 'CNY') WHERE fx_base IS NULL`,
+      );
+      sqlite.exec(
+        `UPDATE main.transactions SET fx_rate = '1' WHERE fx_rate IS NULL AND (SELECT currency FROM main.assets WHERE assets.id = transactions.asset_id) = transactions.fx_base`,
+      );
       // 保留原有自增序列，避免 ID 复用
       sqlite.exec(
         `INSERT OR REPLACE INTO main.sqlite_sequence (name, seq) SELECT name, seq FROM legacy.sqlite_sequence WHERE name IN (${TABLES.map((t) => `'${t}'`).join(',')})`,
