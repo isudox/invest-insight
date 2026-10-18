@@ -1,0 +1,8 @@
+packages:
+  - apps/*
+  - packages/*
+
+# 允许执行构建脚本的依赖（better-sqlite3 需要下载预编译或本地编译原生模块）
+allowBuilds:
+  better-sqlite3: true
+  esbuild: true

@@ -1,0 +1,5 @@
+pnpm-lock.yaml
+**/dist
+**/drizzle/meta
+data
+apps/old-src

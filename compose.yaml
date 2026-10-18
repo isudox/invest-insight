@@ -1,0 +1,20 @@
+# 用法：
+#   1. 复制 .env.example 为 .env，按需修改
+#   2. docker compose up -d
+#   3. 浏览器访问 http://<服务器 IP>:8787
+services:
+  invest-insight:
+    image: ghcr.io/isudox/invest-insight:latest
+    # 从源码构建时改用：build: .
+    container_name: invest-insight
+    restart: unless-stopped
+    ports:
+      - '${HOST_PORT:-8787}:8787'
+    volumes:
+      - ./data:/data
+    env_file: .env
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true

@@ -1,0 +1,6 @@
+#!/bin/sh
+# 容器内的管理命令：docker exec -it invest-insight ii user add admin
+if [ "$(id -u)" = "0" ]; then
+  exec su-exec "${PUID:-1000}:${PGID:-1000}" node /app/dist/cli.js "$@"
+fi
+exec node /app/dist/cli.js "$@"

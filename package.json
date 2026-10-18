@@ -1,0 +1,33 @@
+{
+  "name": "invest-insight",
+  "version": "0.2.0",
+  "private": true,
+  "description": "自托管的个人资产配置、调整与追踪工具",
+  "license": "UNLICENSED",
+  "type": "module",
+  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @invest-insight/server --filter @invest-insight/web dev",
+    "build": "pnpm --filter @invest-insight/web build && pnpm --filter @invest-insight/server build",
+    "start": "pnpm --filter @invest-insight/server start",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:generate": "pnpm --filter @invest-insight/server db:generate",
+    "user": "pnpm --filter @invest-insight/server cli user"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.24.0",
+    "eslint": "^9.24.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "globals": "^16.0.0",
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.2",
+    "typescript-eslint": "^8.29.0"
+  }
+}

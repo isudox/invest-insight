@@ -1,0 +1,11 @@
+**/node_modules
+**/dist
+data
+.git
+.github
+.claude
+apps/old-src
+**/*.log
+.env
+.env.*
+!.env.example
