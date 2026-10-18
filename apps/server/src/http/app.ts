@@ -21,7 +21,8 @@ export function createApp(config: Config) {
 
   app.use('*', async (c, next) => {
     c.set('config', config);
-    c.set('locale', resolveLocale(c.req.header('x-locale'), c.req.header('accept-language')));
+    // 下载链接无法携带请求头，允许用 ?locale= 指定语言
+    c.set('locale', resolveLocale(c.req.header('x-locale') ?? c.req.query('locale'), c.req.header('accept-language')));
     await next();
   });
   app.use(

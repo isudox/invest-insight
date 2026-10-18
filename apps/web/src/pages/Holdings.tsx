@@ -4,7 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import { api, notifyDataChanged, useApi } from '../api';
 import { AssetForm, TxForm } from '../components/forms';
 import { Icon, Modal, Segmented, useToast } from '../components/ui';
-import { money, num, pct, tone, txLabel } from '../format';
+import { compact, money, num, pct, tone, txLabel } from '../format';
 import i18n from '../i18n';
 import type { Account, Category, Holding, Transaction, TxType } from '@invest-insight/shared';
 
@@ -165,7 +165,14 @@ export function Holdings() {
                             {h.currency !== cur && <div className="asset-sub">{money(h.value, h.currency, 0)}</div>}
                           </td>
                           <td className="r">{money(h.cost_base, cur, 0)}</td>
-                          <td className={`r ${tone(h.total_return_base)}`}>{money(h.total_return_base, cur, 0)}</td>
+                          <td className={`r ${tone(h.total_return_base)}`}>
+                            <div>{money(h.total_return_base, cur, 0)}</div>
+                            {h.currency !== cur && h.value_base > 0 && (
+                              <div className="asset-sub" title={t('holdings.attributionHint')}>
+                                {t('holdings.attribution', { price: compact(h.price_pnl_base, cur), fx: compact(h.fx_pnl_base, cur) })}
+                              </div>
+                            )}
+                          </td>
                           <td className={`r ${tone(h.return_percent)}`}>{pct(h.return_percent, 2, true)}</td>
                           <td className="r">{pct(h.weight_percent)}</td>
                           <td className="secondary">{h.last_price_date ?? '—'}</td>
@@ -205,7 +212,7 @@ export function Holdings() {
         />
       )}
       {txFor && <TxForm holdings={all} assetId={txFor.asset.id} defaultType={txFor.type} onClose={() => setTxFor(null)} />}
-      {detail && <AssetDetail holding={detail} holdings={all} onClose={() => setDetail(null)} />}
+      {detail && <AssetDetail holding={detail} holdings={all} base={cur} onClose={() => setDetail(null)} />}
     </>
   );
 }
@@ -276,7 +283,7 @@ function ClosedTable({
   );
 }
 
-function AssetDetail({ holding, holdings, onClose }: { holding: Holding; holdings: Holding[]; onClose: () => void }) {
+function AssetDetail({ holding, holdings, base, onClose }: { holding: Holding; holdings: Holding[]; base: string; onClose: () => void }) {
   const toast = useToast();
   const { data } = useApi<Holding & { transactions: Transaction[] }>(`/api/assets/${holding.id}`);
   const [editTx, setEditTx] = useState<Transaction | null>(null);
@@ -312,6 +319,23 @@ function AssetDetail({ holding, holdings, onClose }: { holding: Holding; holding
           </div>
         </div>
       </div>
+      {h.fx_rate !== 1 && h.value_base > 0 && (
+        <div className="kv" style={{ marginTop: 0, marginBottom: 12 }}>
+          <div>
+            <div className="k">{i18n.t('holdings.costAtTradeFx')}</div>
+            <div className="v num">{compact(h.cost_base, base)}</div>
+          </div>
+          <div>
+            <div className="k">{i18n.t('holdings.pricePnl')}</div>
+            <div className={`v num ${tone(h.price_pnl_base)}`}>{compact(h.price_pnl_base, base)}</div>
+          </div>
+          <div>
+            <div className="k">{i18n.t('holdings.fxPnl')}</div>
+            <div className={`v num ${tone(h.fx_pnl_base)}`}>{compact(h.fx_pnl_base, base)}</div>
+          </div>
+        </div>
+      )}
+      {h.fx_estimated_count > 0 && <p className="help warn-text">{i18n.t('holdings.fxEstimated', { count: h.fx_estimated_count })}</p>}
       {h.notes && <p className="secondary">{h.notes}</p>}
       <div className="table-wrap" style={{ maxHeight: 360, overflowY: 'auto' }}>
         <table>
@@ -352,8 +376,10 @@ function AssetDetail({ holding, holdings, onClose }: { holding: Holding; holding
 }
 
 export function describeTx(t: Transaction, c: string) {
+  // 外币交易附上成交汇率
+  const fx = t.fx_rate != null && t.fx_base && c && c !== t.fx_base && t.type !== 'valuation' ? ` · ${i18n.t('tx.fxIs', { rate: t.fx_rate })}` : '';
   if (t.type === 'buy' || t.type === 'sell')
-    return `${num(t.quantity)} × ${money(t.price, c)}${t.fee ? ` · ${i18n.t('tx.feeShort', { fee: money(t.fee, c) })}` : ''}`;
+    return `${num(t.quantity)} × ${money(t.price, c)}${t.fee ? ` · ${i18n.t('tx.feeShort', { fee: money(t.fee, c) })}` : ''}${fx}`;
   if (t.type === 'valuation') return t.price != null ? i18n.t('tx.priceIs', { price: money(t.price, c) }) : i18n.t('tx.valueIs', { value: money(t.amount, c) });
-  return money(t.amount, c);
+  return money(t.amount, c) + fx;
 }

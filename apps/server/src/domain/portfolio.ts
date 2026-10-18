@@ -2,6 +2,7 @@ import { asc, eq } from 'drizzle-orm';
 import type { CategorySummary, Holding, Rebalance, Summary } from '@invest-insight/shared';
 import { getDb } from '../db/index.js';
 import { accounts, assets, categories, transactions, type AssetRow, type CategoryRow, type TxRow } from '../db/schema.js';
+import { buildFxHistory, txFx } from './fx.js';
 import { applyTx, emptyState, type AssetState } from './ledger.js';
 import { fxToBase, getBaseCurrency, getFxRates } from './prefs.js';
 
@@ -25,20 +26,24 @@ export function allTransactions(): TxRow[] {
   return getDb().select().from(transactions).orderBy(asc(transactions.date), asc(transactions.id)).all();
 }
 
-/** 回放全部流水，得到每个资产的状态 */
-export function replayAll(assetRows: AssetRow[], txs: TxRow[] = allTransactions()) {
-  const modes = new Map(assetRows.map((a) => [a.id, a.valuation_mode]));
+/** 回放全部流水，得到每个资产的状态（外币交易按成交汇率折算基准币种成本） */
+export function replayAll(assetRows: AssetRow[], txs: TxRow[] = allTransactions(), base = getBaseCurrency(), rates = getFxRates()) {
+  const byId = new Map(assetRows.map((a) => [a.id, a]));
   const states = new Map<number, AssetState>();
   const counts = new Map<number, number>();
+  /** 缺少成交汇率、按当前汇率估算的外币交易笔数 */
+  const estimated = new Map<number, number>();
   for (const t of txs) {
-    const mode = modes.get(t.asset_id);
-    if (!mode) continue;
+    const a = byId.get(t.asset_id);
+    if (!a) continue;
     let s = states.get(t.asset_id);
     if (!s) states.set(t.asset_id, (s = emptyState()));
-    applyTx(s, mode, t);
+    const fx = txFx(t, a.currency, base, rates);
+    applyTx(s, a.valuation_mode, t, fx.rate);
     counts.set(t.asset_id, (counts.get(t.asset_id) ?? 0) + 1);
+    if (fx.estimated && t.type !== 'valuation') estimated.set(t.asset_id, (estimated.get(t.asset_id) ?? 0) + 1);
   }
-  return { states, counts };
+  return { states, counts, estimated };
 }
 
 /** 当前持仓（金额同时给出原币种与基准币种） */
@@ -53,7 +58,7 @@ export function computeHoldings(includeArchived = false): Holding[] {
       .map((a) => [a.id, a.name]),
   );
   const rows = listAssets(includeArchived);
-  const { states, counts } = replayAll(rows);
+  const { states, counts, estimated } = replayAll(rows, allTransactions(), getBaseCurrency(), rates);
 
   const holdings: Holding[] = rows.map((a) => {
     const s = states.get(a.id) ?? emptyState();
@@ -62,11 +67,12 @@ export function computeHoldings(includeArchived = false): Holding[] {
     const value = s.value.toNumber();
     const cost = s.cost.toNumber();
     const valueBase = value * fx;
-    const costBase = cost * fx;
+    // 成本、已实现、收入、投入均按成交汇率折算；市值按当前汇率
+    const costBase = s.costBase.toNumber();
     const unrealized = valueBase - costBase;
-    const realized = s.realized.toNumber() * fx;
-    const income = s.income.toNumber() * fx;
-    const invested = s.invested.toNumber() * fx;
+    const realized = s.realizedBase.toNumber();
+    const income = s.incomeBase.toNumber();
+    const invested = s.investedBase.toNumber();
     const totalReturn = unrealized + realized + income;
     return {
       ...a,
@@ -82,6 +88,9 @@ export function computeHoldings(includeArchived = false): Holding[] {
       cost_base: costBase,
       invested_base: invested,
       unrealized_base: unrealized,
+      price_pnl_base: (value - cost) * fx,
+      fx_pnl_base: cost * fx - costBase,
+      fx_estimated_count: estimated.get(a.id) ?? 0,
       realized_base: realized,
       income_base: income,
       total_return_base: totalReturn,
@@ -103,6 +112,8 @@ export function computeSummary(): Summary {
   const sum = (f: (h: Holding) => number, hs = holdings) => hs.reduce((s, h) => s + f(h), 0);
   const totalValue = sum((h) => h.value_base);
   const unrealized = sum((h) => h.unrealized_base);
+  const pricePnl = sum((h) => h.price_pnl_base);
+  const fxPnl = sum((h) => h.fx_pnl_base);
   const realized = sum((h) => h.realized_base);
   const income = sum((h) => h.income_base);
   const invested = sum((h) => h.invested_base);
@@ -128,6 +139,8 @@ export function computeSummary(): Summary {
     total_cost: sum((h) => h.cost_base),
     total_invested: invested,
     unrealized,
+    price_pnl: pricePnl,
+    fx_pnl: fxPnl,
     realized,
     income,
     total_return: unrealized + realized + income,
@@ -139,9 +152,10 @@ export function computeSummary(): Summary {
   };
 }
 
-/** 资产构成走势：回放到每个月末 / 周日（使用当前汇率） */
+/** 资产构成走势：回放到每个月末 / 周日（外币按截至当日记录的成交汇率估值） */
 export function computeHistory(interval: 'week' | 'month') {
   const rates = getFxRates();
+  const base = getBaseCurrency();
   const rows = listAssets(true);
   const assetMap = new Map(rows.map((a) => [a.id, a]));
   const txs = allTransactions().filter((t) => assetMap.has(t.asset_id));
@@ -160,6 +174,7 @@ export function computeHistory(interval: 'week' | 'month') {
     for (; d < today; d.setDate(d.getDate() + 7)) points.push(toDateStr(d));
   }
   if (points[points.length - 1] !== todayStr) points.push(todayStr);
+  const fxAt = buildFxHistory(txs, assetMap, base, rates, todayStr);
 
   const states = new Map<number, AssetState>();
   const result: { date: string; total: number; cost: number; by_category: Record<number, number> }[] = [];
@@ -170,18 +185,17 @@ export function computeHistory(interval: 'week' | 'month') {
       const a = assetMap.get(t.asset_id)!;
       let s = states.get(a.id);
       if (!s) states.set(a.id, (s = emptyState()));
-      applyTx(s, a.valuation_mode, t);
+      applyTx(s, a.valuation_mode, t, txFx(t, a.currency, base, rates).rate);
     }
     const byCat: Record<number, number> = {};
     let total = 0;
     let cost = 0;
     for (const [id, s] of states) {
       const a = assetMap.get(id)!;
-      const fx = fxToBase(a.currency, rates);
-      const v = s.value.toNumber() * fx;
+      const v = s.value.toNumber() * fxAt(a.currency, point);
       byCat[a.category_id] = (byCat[a.category_id] ?? 0) + v;
       total += v;
-      cost += s.cost.toNumber() * fx;
+      cost += s.costBase.toNumber();
     }
     result.push({ date: point, total, cost, by_category: byCat });
   }

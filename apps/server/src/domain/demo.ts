@@ -387,9 +387,23 @@ export function loadDemo(locale: Locale = 'zh-CN') {
     'INSERT INTO assets (name, symbol, category_id, currency, valuation_mode, notes, sector, components_as_of, account_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
   );
   const insComp = db.prepare('INSERT INTO asset_components (asset_id, symbol, name, weight, sector, sort_order) VALUES (?, ?, ?, ?, ?, ?)');
-  const insTxRaw = db.prepare('INSERT INTO transactions (asset_id, type, date, quantity, price, amount, fee, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+  const insTxRaw = db.prepare(
+    'INSERT INTO transactions (asset_id, type, date, quantity, price, amount, fee, fx_rate, fx_base, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+  );
+  // 示例的历史汇率：外币相对当前汇率由低到高缓慢变化（约 4%），用于展示价格 / 汇率收益拆分
+  const base = (db.prepare("SELECT value FROM settings WHERE key = 'base_currency'").get() as { value: string }).value;
+  const rates = Object.fromEntries(
+    (db.prepare('SELECT currency, rate FROM fx_rates').all() as { currency: string; rate: number }[]).map((r) => [r.currency, r.rate]),
+  );
+  const currencyOf = new Map<number, string>();
+  const fxOn = (currency: string, date: string) => {
+    if (currency === base) return '1';
+    const monthsAgo = (now.getTime() - new Date(date + 'T00:00:00').getTime()) / (30.4 * 86400000);
+    const factor = 1 - 0.04 * Math.min(1, monthsAgo / MONTHS) + 0.006 * Math.sin(monthsAgo * 1.7);
+    return toDecimalString(Math.round((rates[currency] ?? 1) * factor * 10000) / 10000);
+  };
   const insTx = (id: number, type: string, date: string, q: number | null, p: number | null, amt: number | null, fee: number, note: string | null) =>
-    insTxRaw.run(id, type, date, d(q), d(p), d(amt), d(fee), note);
+    insTxRaw.run(id, type, date, d(q), d(p), d(amt), d(fee), fxOn(currencyOf.get(id)!, date), base, note);
   const now = new Date();
   const monthDate = (offset: number, day = 15) => {
     const d = new Date(now.getFullYear(), now.getMonth() - MONTHS + offset, day);
@@ -411,6 +425,7 @@ export function loadDemo(locale: Locale = 'zh-CN') {
         accounts.get(a.account) ?? null,
       );
       const id = Number(lastInsertRowid);
+      currencyOf.set(id, a.currency);
       a.components?.forEach(([sym, name, w, sector], i) => insComp.run(id, sym, L(name), w, L(sector), i));
       let price = a.start;
       let value = a.start;

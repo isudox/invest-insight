@@ -130,6 +130,12 @@ export function Dashboard() {
                 <div className={`value ${tone(s.realized + s.income)}`}>{compact(s.realized + s.income, cur)}</div>
                 <div className="sub">
                   {t('dashboard.unrealized')} <span className={tone(s.unrealized)}>{compact(s.unrealized, cur)}</span>
+                  {Math.abs(s.fx_pnl) >= 1 && (
+                    <>
+                      {' '}
+                      · {t('dashboard.fxPart')} <span className={tone(s.fx_pnl)}>{compact(s.fx_pnl, cur)}</span>
+                    </>
+                  )}
                 </div>
               </div>
               <div>

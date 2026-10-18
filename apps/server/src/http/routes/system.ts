@@ -2,12 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { prefsInput, settingsInput, type Meta, type Settings } from '@invest-insight/shared';
+import { csvImportInput, prefsInput, settingsInput, type Meta, type Settings } from '@invest-insight/shared';
 import { VERSION } from '../../config.js';
 import { getDb, getSqlite, schemaVersion, tx } from '../../db/index.js';
 import { createBackup, isSafeName, listBackups } from '../../db/backup.js';
 import { fxRates } from '../../db/schema.js';
 import { loadDemo, resetAll } from '../../domain/demo.js';
+import { analyzeCsv, commitCsv, CsvError, exportTransactionsCsv } from '../../domain/txCsv.js';
 import { toDecimalString } from '../../domain/ledger.js';
 import { getBaseCurrency, getFxRates, getPrefs, putSetting, setPrefs } from '../../domain/prefs.js';
 import { log } from '../../logger.js';
@@ -106,6 +107,34 @@ export const systemRoutes = new Hono<AppEnv>()
     });
     log.info('已从 JSON 备份导入数据');
     return c.json({ ok: true });
+  })
+  // ---------- 交易 CSV ----------
+  .get('/export/transactions.csv', (c) => {
+    c.header('Content-Type', 'text/csv; charset=utf-8');
+    c.header('Content-Disposition', `attachment; filename="invest-insight-transactions-${new Date().toISOString().slice(0, 10)}.csv"`);
+    return c.body(exportTransactionsCsv(c.get('locale')));
+  })
+  .post('/import/csv/preview', async (c) => {
+    const b = await body(c, csvImportInput);
+    try {
+      return c.json(analyzeCsv(b, c.get('locale')).preview);
+    } catch (e) {
+      if (e instanceof CsvError) throw new HttpError(400, e.key, e.params);
+      throw e;
+    }
+  })
+  .post('/import/csv/commit', async (c) => {
+    const b = await body(c, csvImportInput);
+    try {
+      analyzeCsv(b, c.get('locale'));
+    } catch (e) {
+      if (e instanceof CsvError) throw new HttpError(400, e.key, e.params);
+      throw e;
+    }
+    await createBackup(getSqlite(), c.get('config').backupDir, 'pre-restore');
+    const result = commitCsv(b, c.get('locale'));
+    log.info(result, '已从 CSV 导入交易');
+    return c.json(result);
   })
   .post('/demo', async (c) => {
     await createBackup(getSqlite(), c.get('config').backupDir, 'pre-restore');

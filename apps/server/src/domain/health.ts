@@ -3,6 +3,7 @@ import { translate, type Locale, type MessageKey, type Params } from '../i18n.js
 import { computeExposure, UNDISCLOSED, UNSET_SECTOR } from './exposure.js';
 import { Decimal } from './ledger.js';
 import { allTransactions, computeSummary, listAssets, toDateStr } from './portfolio.js';
+import { txFx } from './fx.js';
 import { getFxRates, getPrefs } from './prefs.js';
 
 /**
@@ -186,9 +187,13 @@ export function runHealthCheck(locale: Locale = 'zh-CN'): Health {
   let feeBase = 0;
   let buyBase = 0;
   for (const tx of allTransactions()) {
-    const fx = rates[currencyOf.get(tx.asset_id) ?? ''] ?? 1;
-    feeBase += new Decimal(tx.fee ?? 0).toNumber() * fx;
-    if (tx.type === 'buy') buyBase += new Decimal(tx.quantity ?? 0).times(tx.price ?? 0).toNumber() * fx;
+    const fx = txFx(tx, currencyOf.get(tx.asset_id) ?? cur, cur, rates).rate;
+    feeBase += new Decimal(tx.fee ?? 0).times(fx).toNumber();
+    if (tx.type === 'buy')
+      buyBase += new Decimal(tx.quantity ?? 0)
+        .times(tx.price ?? 0)
+        .times(fx)
+        .toNumber();
   }
   if (buyBase > 0) {
     const ratio = (feeBase / buyBase) * 100;
@@ -230,6 +235,20 @@ export function runHealthCheck(locale: Locale = 'zh-CN'): Health {
     message: missingFx.length ? t('health.fx.fail', { list: missingFx.join(sep) }) : t('health.fx.pass'),
     link: '/settings',
   });
+
+  const estimatedTx = s.holdings.reduce((n, h) => n + h.fx_estimated_count, 0);
+  const hasForeign = s.holdings.some((h) => h.currency !== cur);
+  if (hasForeign) {
+    add({
+      id: 'trade_fx',
+      group: G.data,
+      title: t('health.trade_fx.title'),
+      status: estimatedTx ? 'warn' : 'pass',
+      message: estimatedTx ? t('health.trade_fx.warn', { count: estimatedTx }) : t('health.trade_fx.pass'),
+      details: s.holdings.filter((h) => h.fx_estimated_count > 0).map((h) => t('health.trade_fx.detail', { name: h.name, count: h.fx_estimated_count })),
+      link: '/transactions',
+    });
+  }
 
   add({
     id: 'components',

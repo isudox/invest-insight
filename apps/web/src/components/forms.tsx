@@ -5,7 +5,8 @@ import { num, today, txLabel } from '../format';
 import type { Account, Category, Exposure, Holding, Settings, Transaction, TxType, ValuationMode } from '@invest-insight/shared';
 import { Modal, Segmented, useToast } from './ui';
 
-const numOrNull = (s: string) => (s.trim() === '' ? null : Number(s));
+// 金额以字符串提交，由服务端按十进制精确解析
+const numOrNull = (s: string) => (s.trim() === '' ? null : s.trim());
 
 // ---------- 新增 / 编辑资产 ----------
 
@@ -40,11 +41,14 @@ export function AssetForm({
   const [initQty, setInitQty] = useState('');
   const [initPrice, setInitPrice] = useState('');
   const [initAmount, setInitAmount] = useState('');
+  const [initFx, setInitFx] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
   const catId = categoryId === '' ? categories?.[0]?.id : categoryId;
   const currencies = Object.keys(settings?.fx_rates ?? { CNY: 1 });
+  const initFxNeeded = !asset && !!settings && currency !== settings.base_currency;
+  const initFxValue = initFx ?? (settings?.fx_rates[currency] != null ? String(settings.fx_rates[currency]) : '');
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -65,11 +69,12 @@ export function AssetForm({
       if (asset) {
         await api.put(`/api/assets/${asset.id}`, payload);
       } else {
+        const fx_rate = initFxNeeded ? (numOrNull(initFxValue) ?? undefined) : undefined;
         const initial =
           mode === 'market' && initQty && initPrice
-            ? { date: initDate, quantity: Number(initQty), price: Number(initPrice) }
+            ? { date: initDate, quantity: initQty.trim(), price: initPrice.trim(), fx_rate }
             : mode === 'manual' && initAmount
-              ? { date: initDate, amount: Number(initAmount) }
+              ? { date: initDate, amount: initAmount.trim(), fx_rate }
               : undefined;
         await api.post('/api/assets', { ...payload, initial });
       }
@@ -188,6 +193,13 @@ export function AssetForm({
                 />
               </div>
             )}
+            {initFxNeeded && (
+              <div className="field">
+                <label>{t('forms.fxRate', { currency, base: settings?.base_currency })}</label>
+                <input className="input" type="number" step="any" min="0" value={initFxValue} onChange={(e) => setInitFx(e.target.value)} />
+                <span className="help">{t('forms.fxRateHelp')}</span>
+              </div>
+            )}
           </>
         )}
 
@@ -256,6 +268,9 @@ export function TxForm({
   const [price, setPrice] = useState(tx?.price?.toString() ?? (defaultType === 'valuation' && asset?.price ? String(asset.price) : ''));
   const [amount, setAmount] = useState(tx?.amount?.toString() ?? (defaultType === 'valuation' && mode === 'manual' && asset ? String(asset.value) : ''));
   const [fee, setFee] = useState(tx?.fee ? String(tx.fee) : '');
+  const { data: settings } = useApi<Settings>('/api/settings');
+  const base = settings?.base_currency;
+  const [fx, setFx] = useState<string | null>(tx?.fx_rate != null ? String(tx.fx_rate) : null);
   const [note, setNote] = useState(tx?.note ?? '');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -264,6 +279,9 @@ export function TxForm({
   const needsPrice = needsQty || (effectiveType === 'valuation' && mode === 'market');
   const needsAmount = !needsPrice;
   const cur = asset?.currency ?? '';
+  // 外币交易需要成交汇率：默认填入当前汇率，可按成交单修改
+  const needsFx = !!asset && !!base && cur !== base && effectiveType !== 'valuation';
+  const fxValue = fx ?? (settings?.fx_rates[cur] != null ? String(settings.fx_rates[cur]) : '');
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -276,7 +294,8 @@ export function TxForm({
       quantity: needsQty ? numOrNull(quantity) : null,
       price: needsPrice ? numOrNull(price) : null,
       amount: needsAmount ? numOrNull(amount) : null,
-      fee: needsQty ? Number(fee || 0) : 0,
+      fee: needsQty ? fee.trim() || '0' : '0',
+      fx_rate: needsFx ? numOrNull(fxValue) : null,
       note: note || null,
     };
     try {
@@ -352,6 +371,13 @@ export function TxForm({
           <div className="field">
             <label>{effectiveType === 'valuation' ? t('forms.currentValue', { currency: cur }) : t('forms.amount', { currency: cur })}</label>
             <input className="input" type="number" step="any" value={amount} onChange={(e) => setAmount(e.target.value)} required />
+          </div>
+        )}
+        {needsFx && (
+          <div className="field">
+            <label>{t('forms.fxRate', { currency: cur, base })}</label>
+            <input className="input" type="number" step="any" min="0" value={fxValue} onChange={(e) => setFx(e.target.value)} required />
+            <span className="help">{t('forms.fxRateHelp')}</span>
           </div>
         )}
         {needsQty && quantity && price && (

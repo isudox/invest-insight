@@ -3,9 +3,10 @@ import type { Income, Performance, PeriodKey, PeriodMetrics } from '@invest-insi
 import { PERIOD_KEYS } from '@invest-insight/shared';
 import { getDb } from '../db/index.js';
 import { assets as assetsTable, categories, transactions } from '../db/schema.js';
+import { buildFxHistory, txFx } from './fx.js';
 import { applyTx, Decimal, emptyState, type AssetState } from './ledger.js';
 import { allTransactions, listAssets, toDateStr } from './portfolio.js';
-import { fxToBase, getBaseCurrency, getFxRates } from './prefs.js';
+import { getBaseCurrency, getFxRates } from './prefs.js';
 
 /**
  * 收益表现：按天回放交易流水，得到每日市值与外部资金流，
@@ -36,11 +37,14 @@ const daysBetween = (a: string, b: string) => Math.round((new Date(b + 'T00:00:0
 
 export function dailySeries(): DayPoint[] {
   const rates = getFxRates();
+  const baseCurrency = getBaseCurrency();
   const assetMap = new Map(listAssets(true).map((a) => [a.id, a]));
   const txs = allTransactions().filter((t) => assetMap.has(t.asset_id));
   if (!txs.length) return [];
 
   const today = toDateStr(new Date());
+  // 资金流按成交汇率折算；每日市值按截至当日记录的汇率估值，今天按当前汇率
+  const fxAt = buildFxHistory(txs, assetMap, baseCurrency, rates, today);
   const states = new Map<number, AssetState>();
   const points: DayPoint[] = [];
   let i = 0;
@@ -51,7 +55,8 @@ export function dailySeries(): DayPoint[] {
     while (i < txs.length && txs[i].date <= d) {
       const tx = txs[i++];
       const a = assetMap.get(tx.asset_id)!;
-      const fx = fxToBase(a.currency, rates);
+      const txRate = txFx(tx, a.currency, baseCurrency, rates).rate;
+      const fx = txRate.toNumber();
       const q = new Decimal(tx.quantity ?? 0);
       const p = new Decimal(tx.price ?? 0);
       const amt = new Decimal(tx.amount ?? 0).toNumber();
@@ -63,14 +68,13 @@ export function dailySeries(): DayPoint[] {
       else if (tx.type === 'income') outflow += amt * fx;
       let s = states.get(a.id);
       if (!s) states.set(a.id, (s = emptyState()));
-      applyTx(s, a.valuation_mode, tx);
+      applyTx(s, a.valuation_mode, tx, txRate);
     }
     let value = 0;
     let cost = 0;
     for (const [id, s] of states) {
-      const fx = fxToBase(assetMap.get(id)!.currency, rates);
-      value += s.value.toNumber() * fx;
-      cost += s.cost.toNumber() * fx;
+      value += s.value.toNumber() * fxAt(assetMap.get(id)!.currency, d);
+      cost += s.costBase.toNumber();
     }
     const base = prevValue + inflow;
     const r = base >= 1 ? (value + outflow - prevValue - inflow) / base : null;
@@ -228,10 +232,13 @@ export function computePerformance(key: PeriodKey): Performance {
 /** 分红、利息等收入统计 */
 export function computeIncome(): Income {
   const rates = getFxRates();
+  const base = getBaseCurrency();
   const rows = getDb()
     .select({
       date: transactions.date,
       amount: transactions.amount,
+      fx_rate: transactions.fx_rate,
+      fx_base: transactions.fx_base,
       asset_id: assetsTable.id,
       asset_name: assetsTable.name,
       currency: assetsTable.currency,
@@ -256,7 +263,7 @@ export function computeIncome(): Income {
   let total = 0;
   let last12 = 0;
   for (const r of rows) {
-    const v = new Decimal(r.amount ?? 0).toNumber() * fxToBase(r.currency, rates);
+    const v = new Decimal(r.amount ?? 0).times(txFx(r, r.currency, base, rates).rate).toNumber();
     total += v;
     if (r.date > cutoff) last12 += v;
     byMonth.set(r.date.slice(0, 7), (byMonth.get(r.date.slice(0, 7)) ?? 0) + v);

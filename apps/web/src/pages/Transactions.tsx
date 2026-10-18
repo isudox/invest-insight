@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { api, notifyDataChanged, useApi } from '../api';
+import { CsvImport } from '../components/CsvImport';
 import { TxForm } from '../components/forms';
 import { Icon, useToast } from '../components/ui';
 import { TX_TYPE_LIST, txLabel } from '../format';
-import i18n from '../i18n';
+import i18n, { currentLang } from '../i18n';
 import type { Category, Holding, Transaction } from '@invest-insight/shared';
 import { describeTx } from './Holdings';
 
@@ -20,6 +21,7 @@ export function Transactions() {
   const { data: holdings } = useApi<Holding[]>('/api/assets?archived=1');
   const { data: categories } = useApi<Category[]>('/api/categories');
   const [editing, setEditing] = useState<Transaction | 'new' | null>(null);
+  const [importing, setImporting] = useState(false);
 
   const del = async (t: Transaction) => {
     if (!confirm(i18n.t('tx.confirmDelete'))) return;
@@ -36,6 +38,12 @@ export function Transactions() {
           <p>{i18n.t('tx.subtitle')}</p>
         </div>
         <div className="actions">
+          <a className="btn" href={`/api/export/transactions.csv?locale=${currentLang()}`} download>
+            {i18n.t('tx.exportCsv')}
+          </a>
+          <button className="btn" onClick={() => setImporting(true)}>
+            {i18n.t('tx.importCsv')}
+          </button>
           <button className="btn primary" onClick={() => setEditing('new')} disabled={!holdings?.length}>
             <Icon name="plus" /> {i18n.t('tx.record')}
           </button>
@@ -130,6 +138,7 @@ export function Transactions() {
           onClose={() => setEditing(null)}
         />
       )}
+      {importing && <CsvImport onClose={() => setImporting(false)} />}
     </>
   );
 }
